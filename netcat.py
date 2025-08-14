@@ -6,29 +6,34 @@ import sys
 import threading
 import textwrap
 
-# CORREÇÃO 1: Função execute melhorada para capturar saída corretamente.
+'''
+ Executes a command in the local shell and returns its output.
+ This function is used by the server to run commands sent by the client
+'''    
 def execute(cmd):
     cmd = cmd.strip()
     if not cmd:
         return ""
     try:
-        # Usar capture_output=True e text=True é a forma moderna e segura.
-        # stderr=subprocess.STDOUT redireciona erros para a saída padrão.
+        # shlex.split() safely splits the command string, handling quotes and arguments.
+        # This prevents command injection vulnerabilities.
+        # We redirect stderr to stdout to capture all output, including errors.
         output = subprocess.run(shlex.split(cmd),
                                 stdout = subprocess.PIPE,
                                 stderr = subprocess.STDOUT,
                                 text = True)
         return output.stdout
     except FileNotFoundError:
-        return f"Comando não encontrado: {cmd}\n"
+        return f"Command not found: {cmd}\n"
 
 
-class NetCat:
+class NetCat: # How creative, I know. I'm sorry.
     def __init__(self, args, buffer=b''):
         self.args = args
         self.buffer = buffer
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)   # SO_REUSEADDR allows the socket to be reused immediately after it's closed.
+                                                                            # This is useful for restarting the server without waiting for the OS to release the port.
 
     def run(self):
         if self.args.listen:
@@ -39,11 +44,10 @@ class NetCat:
     def send(self):
         try:
             self.socket.connect((self.args.target, self.args.port))
-            # Se houver um buffer inicial (vindo de um pipe), envie-o primeiro.
+           
             if self.buffer:
                 self.socket.send(self.buffer)
-            
-            # CORREÇÃO 2: Loop de comunicação interativa corrigido.
+            # This is the main interactive loop for the client.
             while True:
                 recv_len = 1
                 response = ''
@@ -53,23 +57,23 @@ class NetCat:
                     response += data.decode()
                     if recv_len < 4096:
                         break
-                
+                 # Continuously receive data until the server sends a smaller chunk
                 if response:
-                    # Usar end='' evita uma quebra de linha extra.
+                    # Print the server's response without an extra newline.
                     print(response, end='')
-                
-                # Aguarda nova entrada do usuário.
+                    
+                # Wait for new input from the user.
                 buffer = input()
                 buffer += '\n'
                 self.socket.send(buffer.encode())
 
         except KeyboardInterrupt:
-            print('\nConexão encerrada pelo usuário.')
+            print('\nConnection closed by the user.')
         except EOFError:
-            # Acontece quando a entrada é redirecionada (pipe) e termina.
-            print('Conexão fechada.')
+           
+            print('Conection closed.')
         except ConnectionRefusedError:
-            print(f"Conexão recusada por {self.args.target}:{self.args.port}")
+            print(f"Conection refused by {self.args.target}:{self.args.port}")
         finally:
             self.socket.close()
 
@@ -80,11 +84,11 @@ class NetCat:
         
         while True:
             client_socket, _ = self.socket.accept()
-            print(f'[*] Conexão aceita de {_[0]}:{_[1]}')
+            print(f'[*] Conexão accepted from {_[0]}:{_[1]}')
             client_thread = threading.Thread(
                 target=self.handle, args=(client_socket,))
             client_thread.start()
-
+            
     def handle(self, client_socket):
         if self.args.execute:
             output = execute(self.args.execute)
@@ -100,10 +104,10 @@ class NetCat:
             try:
                 with open(self.args.upload, 'wb') as f:
                     f.write(file_buffer)
-                message = f'Arquivo salvo em {self.args.upload}\n'
+                message = f'File saved in {self.args.upload}\n'
                 client_socket.send(message.encode())
             except IOError as e:
-                message = f'Falha ao salvar arquivo: {e}\n'
+                message = f'Errow while attempting to save file: {e}\n'
                 client_socket.send(message.encode())
 
         elif self.args.command:
@@ -116,52 +120,52 @@ class NetCat:
                     
                     response = execute(cmd_buffer.decode())
                     if not response:
-                        response = "\n" # Envia uma resposta vazia para não travar o cliente
+                        response = "\n"
                     client_socket.send(response.encode())
                 
                 except Exception as e:
-                    # CORREÇÃO 3: Não encerrar o servidor! Apenas a thread do cliente.
-                    print(f'[!] Cliente desconectado: {e}')
-                    break # Sai do loop, finalizando a thread.
+                  
+                    print(f'[!] Client disconnected: {e}')
+                    break 
         
         client_socket.close()
 
 if __name__ == '__main__':
-    # CORREÇÃO 4: Usar r'''...''' para criar uma "raw string" e evitar SyntaxWarning.
     parser = argparse.ArgumentParser(
-        description='BHP Net Tool',
+        description='PyCat',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent(r'''Exemplos:
-    # Iniciar uma shell remota no servidor
+    # Start remote shell
     netcat.py -t 0.0.0.0 -p 5555 -l -c
     
-    # Fazer upload de um arquivo para o servidor
+    # File upload
     netcat.py -t 0.0.0.0 -p 5555 -l -u=meuarquivo.txt
     
-    # Executar um comando específico no servidor
+    # Execute a single specific command
     netcat.py -t 0.0.0.0 -p 5555 -l -e="whoami"
     
-    # Enviar texto para um servidor (pipe)
+    # Send text to a server (pipe)
     echo 'ABC' | ./netcat.py -t 192.168.1.108 -p 135
     
-    # Conectar a um servidor
+    # Connect to the server
     netcat.py -t 192.168.1.108 -p 5555
     '''))
     
-    parser.add_argument('-c', '--command', action='store_true', help='iniciar uma shell de comandos')
-    parser.add_argument('-e', '--execute', help='executar um comando específico')
-    parser.add_argument('-l', '--listen', action='store_true', help='modo de escuta (servidor)')
-    parser.add_argument('-p', '--port', type=int, default=5555, help='porta de destino')
-    # CORREÇÃO 5: Mudar o target padrão para 0.0.0.0, que é o ideal para um servidor.
-    parser.add_argument('-t', '--target', default='0.0.0.0', help='endereço IP de destino')
-    parser.add_argument('-u', '--upload', help='fazer upload de um arquivo')
+    parser.add_argument('-c', '--command', action='store_true', help='start a command shell')
+    parser.add_argument('-e', '--execute', help='execute a specific command')
+    parser.add_argument('-l', '--listen', action='store_true', help='listening mode (server)')
+    parser.add_argument('-p', '--port', type=int, default=5555, help='desired port')
+    parser.add_argument('-t', '--target', default='0.0.0.0', help='Host IP')
+    parser.add_argument('-u', '--upload', help='file upload')
     args = parser.parse_args()
 
-    # CORREÇÃO 6: Lógica para não travar em modo cliente interativo.
+   
     buffer = b''
+     # This logic prevents the client from hanging when run in an interactive terminal.
+     # We only read from stdin if the input is being piped to the script.
     if not args.listen:
-        # Só tente ler do stdin se a entrada NÃO for um terminal interativo (ou seja, se for um pipe).
-        if not sys.stdin.isatty():
+        
+        if not sys.stdin.isatty():  # sys.stdin.isatty() returns False if input is piped
             buffer = sys.stdin.read().encode()
 
     nc = NetCat(args, buffer)
