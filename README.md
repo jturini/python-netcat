@@ -74,7 +74,7 @@ This will be a small personal project. The next planned functionalities are:
 
 -   [ ] **UDP** support.
 -   [ ] Allow for the usagege of **Cryptography SSL/TLS**.
--   [ ] Adding a port scan **Port Scan**.
+-   [ ] Adding a **Port Scan**.
 -   [ ] Improvements on the **logging system and overall verbose**.
 
 
